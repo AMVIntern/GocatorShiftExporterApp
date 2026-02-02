@@ -1,0 +1,22 @@
+# Visual Studio
+.vs/
+*.user
+*.suo
+
+# Build outputs
+bin/
+obj/
+
+# NuGet
+*.nupkg
+packages/
+*.snupkg
+
+# Logs and temp
+*.log
+*.tmp
+
+# Other
+TestResults/
+*.dbmdl
+*.bak
