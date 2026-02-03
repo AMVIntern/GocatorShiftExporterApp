@@ -10,11 +10,11 @@ using System.Threading.Tasks;
 
 namespace GocatorShiftExportApp.ViewModels
 {
-    public class EmailViewModel
+    public class GocatorDataExporter
     {
         private readonly EmailData _emailData;
 
-        public EmailViewModel(EmailData emailData)
+        public GocatorDataExporter(EmailData emailData)
         {
             _emailData = emailData ?? throw new ArgumentNullException(nameof(emailData));
         }
@@ -23,9 +23,9 @@ namespace GocatorShiftExportApp.ViewModels
         {
             try
             {
-                string topFolder = @"C:\AMV\Gocator\Top";
-                string bottomFolder = @"C:\AMV\Gocator\Bottom";
-                string combinedFolder = @"C:\AMV\Gocator\Combined";
+                string topFolder = @"E:\AMV\GocatorShiftExportApp\Csvs\Top";
+                string bottomFolder = @"E:\AMV\GocatorShiftExportApp\Csvs\Bottom";
+                string combinedFolder = @"E:\AMV\GocatorShiftExportApp\Csvs\Combined";
 
                 // Create combined folder if it doesn't exist
                 Directory.CreateDirectory(combinedFolder);
@@ -195,16 +195,6 @@ namespace GocatorShiftExportApp.ViewModels
                     }
                 }
                 Console.WriteLine($"Combined CSV saved to: {combinedFile}");
-
-                // Extract date and shift for email
-                string combinedShift = shiftValue;
-                string combinedDate = dateValue;
-
-                // Set attachment path and update email content with combined file data
-                _emailData.AttachmentPath = combinedFile;
-                _emailData.Subject = string.Format(_emailData.Subject, combinedDate, combinedShift);
-                _emailData.Body = $"Please find attached the Gocator Report for {combinedDate} corresponding to Shift {combinedShift}.";
-                SendEmail();
             }
             catch (Exception ex)
             {

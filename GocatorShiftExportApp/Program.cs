@@ -1,5 +1,8 @@
 ﻿using System;
 using System.IO;
+using System.Linq;
+using System.Net;
+using System.Net.Mail;
 using System.Threading;
 using System.Text.Json;
 using GocatorShiftExportApp.Models;
@@ -18,7 +21,7 @@ class Program
         }
 
         // Initialize ViewModel
-        var viewModel = new EmailViewModel(emailData);
+        var gocatorDataExporter = new GocatorDataExporter(emailData);
 
         // Run in an infinite loop to wait for scheduled times
         while (true)
@@ -27,16 +30,6 @@ class Program
             // Find the next scheduled time
             DateTime nextScheduledTime = GetNextValidScheduledTime(now);
 
-            //// Check if the next scheduled time falls on a Saturday or Sunday
-            //while (nextScheduledTime.DayOfWeek == DayOfWeek.Saturday || nextScheduledTime.DayOfWeek == DayOfWeek.Sunday)
-            //{
-            //    // Move to the next Monday by adding days (6 if Sunday, 1 if Saturday)
-            //    //int daysToAdd = nextScheduledTime.DayOfWeek == DayOfWeek.Sunday ? 1 : (8 - (int)nextScheduledTime.DayOfWeek);
-            //    //nextScheduledTime = nextScheduledTime.AddDays(daysToAdd);
-            //    //nextScheduledTime = GetNextScheduledTime(nextScheduledTime, scheduledTimeSpans);
-            //}
-
-            // Calculate initial delay to next scheduled time
             TimeSpan delay = nextScheduledTime - now;
             Console.WriteLine($"Next report scheduled at {nextScheduledTime}. Waiting for {delay.TotalMinutes:F2} minutes...");
 
@@ -51,7 +44,44 @@ class Program
             Console.WriteLine(); // New line after countdown
 
             // Generate combined CSV and send email (shift and date from CSV)
-            viewModel.GenerateAndSendReport();
+            gocatorDataExporter.GenerateAndSendReport();
+
+            // Generate combined Excel file with Gocator and Shift data
+            var excelGenerator = new CombinedExcelGenerator();
+            string excelFilePath = excelGenerator.GenerateCombinedExcelReport();
+
+            // Send email with the combined Excel file
+            if (!string.IsNullOrEmpty(excelFilePath) && File.Exists(excelFilePath))
+            {
+                // Extract shift and date from filename for email subject/body
+                string fileName = Path.GetFileNameWithoutExtension(excelFilePath);
+                // Format: Combined_Report_Shift_1_28-JAN-2026
+                string shift = "Unknown";
+                string date = DateTime.Now.ToString("dd-MMM-yyyy");
+                
+                if (fileName.Contains("Shift_"))
+                {
+                    int shiftIndex = fileName.IndexOf("Shift_") + 6;
+                    int underscoreIndex = fileName.IndexOf("_", shiftIndex);
+                    if (underscoreIndex > shiftIndex)
+                    {
+                        shift = fileName.Substring(shiftIndex, underscoreIndex - shiftIndex);
+                    }
+                    int lastUnderscore = fileName.LastIndexOf("_");
+                    if (lastUnderscore > 0)
+                    {
+                        date = fileName.Substring(lastUnderscore + 1);
+                    }
+                }
+
+                // Update email data for combined report
+                emailData.AttachmentPath = excelFilePath;
+                emailData.Subject = $"AMV Combined Report - Shift {shift} - {date}";
+                emailData.Body = $"Please find attached the Combined Report (Gocator + Shift Data) for {date} corresponding to Shift {shift}.";
+
+                // Send email
+                SendEmail(emailData);
+            }
         }
     }
     private static DateTime GetNextValidScheduledTime(DateTime now)
@@ -154,6 +184,84 @@ class Program
         {
             Console.WriteLine($"Error loading or creating configuration: {ex.Message}");
             return null;
+        }
+    }
+
+    private static bool SendEmail(EmailData emailData)
+    {
+        try
+        {
+            // Create the mail message
+            using (MailMessage mail = new MailMessage())
+            {
+                mail.From = new MailAddress(emailData.FromEmail);
+                
+                // Add multiple recipients from ToEmails list
+                if (emailData.ToEmails != null && emailData.ToEmails.Any())
+                {
+                    foreach (var toEmail in emailData.ToEmails)
+                    {
+                        mail.To.Add(toEmail);
+                    }
+                }
+                else
+                {
+                    Console.WriteLine("No recipients specified.");
+                    return false;
+                }
+
+                // CC
+                if (emailData.CcEmails != null && emailData.CcEmails.Any())
+                {
+                    foreach (var ccEmail in emailData.CcEmails)
+                    {
+                        mail.CC.Add(ccEmail);
+                    }
+                }
+
+                mail.Subject = emailData.Subject;
+                mail.Body = emailData.Body;
+                mail.IsBodyHtml = false;
+
+                // Attach the file if it exists
+                if (!string.IsNullOrEmpty(emailData.AttachmentPath) && File.Exists(emailData.AttachmentPath))
+                {
+                    Attachment attachment = new Attachment(emailData.AttachmentPath);
+                    mail.Attachments.Add(attachment);
+                }
+                else if (!string.IsNullOrEmpty(emailData.AttachmentPath))
+                {
+                    Console.WriteLine("Attachment file not found.");
+                    return false;
+                }
+
+                // Configure the SMTP client
+                using (SmtpClient smtpClient = new SmtpClient("smtp.gmail.com", 587))
+                {
+                    smtpClient.EnableSsl = true;
+                    smtpClient.UseDefaultCredentials = false;
+                    smtpClient.Credentials = new NetworkCredential(emailData.FromEmail, emailData.AppPassword);
+                    smtpClient.DeliveryMethod = SmtpDeliveryMethod.Network;
+
+                    // Send the email
+                    smtpClient.Send(mail);
+                    Console.WriteLine("Email sent successfully!");
+                    return true;
+                }
+            }
+        }
+        catch (SmtpException ex)
+        {
+            Console.WriteLine($"SMTP Error: {ex.Message}");
+            Console.WriteLine($"Status Code: {ex.StatusCode}");
+            if (ex.InnerException != null)
+                Console.WriteLine($"Inner Exception: {ex.InnerException.Message}");
+            return false;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"General Error: {ex.Message}");
+            return false;
         }
     }
 }
