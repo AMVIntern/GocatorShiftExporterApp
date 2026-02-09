@@ -76,7 +76,7 @@ class Program
 
                 // Update email data for combined report
                 emailData.AttachmentPath = excelFilePath;
-                emailData.Subject = $"AMV Gocator + Station Report - Shift {shift} - {date}";
+                emailData.Subject = $"AMV Combined Station Report - Shift {shift} - {date}";
                 emailData.Body = $"Please find attached the Gocator, Station 1 & Station 2 Report for {date} corresponding to Shift {shift}.";
 
                 // Send email

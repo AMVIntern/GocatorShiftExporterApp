@@ -161,8 +161,22 @@ namespace GocatorShiftExportApp.ViewModels
                     return null;
                 }
 
-                // First line is headers, second line is sub-headers, data starts from line 3
+                // First line is headers, second line is sub-headers (TLB1, TIB1, etc.), data starts from line 3
                 string[] headers = lines[0].Split(',').Select(h => h.Trim()).ToArray();
+                string[] subHeaders = null;
+                if (lines.Length >= 2)
+                {
+                    subHeaders = lines[1].Split(',').Select(h => h.Trim()).ToArray();
+                    if (subHeaders.Length != headers.Length)
+                    {
+                        // Pad or trim to match header count
+                        var list = new List<string>(subHeaders);
+                        while (list.Count < headers.Length) list.Add("");
+                        if (list.Count > headers.Length) list = list.Take(headers.Length).ToList();
+                        subHeaders = list.ToArray();
+                    }
+                }
+
                 var rows = new List<ShiftRow>();
 
                 for (int i = 2; i < lines.Length; i++)
@@ -192,7 +206,7 @@ namespace GocatorShiftExportApp.ViewModels
                     rows.Add(new ShiftRow { Data = rowData, Values = rowValues });
                 }
 
-                return new ShiftData { Headers = headers, Rows = rows, Station = station };
+                return new ShiftData { Headers = headers, SubHeaders = subHeaders, Rows = rows, Station = station };
             }
             catch (Exception ex)
             {
@@ -521,11 +535,11 @@ namespace GocatorShiftExportApp.ViewModels
 
         private void WriteEmptyShiftSheet(ExcelWorksheet sheet, CsvData gocatorData, string station)
         {
-            // Try to get headers from a sample shift file
+            // Try to get headers and sub-headers from a sample shift file
             string folder = station == "S1" ? _s1Folder : _s2Folder;
             string[]? headers = null;
+            string[]? subHeaders = null;
 
-            // Try to read a sample file to get headers
             if (Directory.Exists(folder))
             {
                 var sampleFile = Directory.GetFiles(folder, "*.csv").FirstOrDefault();
@@ -535,6 +549,7 @@ namespace GocatorShiftExportApp.ViewModels
                     if (sampleData != null && sampleData.Headers != null)
                     {
                         headers = sampleData.Headers;
+                        subHeaders = sampleData.SubHeaders;
                     }
                 }
             }
@@ -557,7 +572,6 @@ namespace GocatorShiftExportApp.ViewModels
             var reorderedHeaders = new List<string>();
             var processedHeaders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             
-            // Add Station first
             string stationHeader = headers.FirstOrDefault(h => h.Equals("Station", StringComparison.OrdinalIgnoreCase));
             if (stationHeader != null)
             {
@@ -565,7 +579,6 @@ namespace GocatorShiftExportApp.ViewModels
                 processedHeaders.Add(stationHeader);
             }
             
-            // Add Date second
             string dateHeader = headers.FirstOrDefault(h => h.Equals("Date", StringComparison.OrdinalIgnoreCase));
             if (dateHeader != null)
             {
@@ -573,7 +586,6 @@ namespace GocatorShiftExportApp.ViewModels
                 processedHeaders.Add(dateHeader);
             }
             
-            // Add Timestamp third
             string timestampHeader = headers.FirstOrDefault(h => h.Equals("Timestamp", StringComparison.OrdinalIgnoreCase));
             if (timestampHeader != null)
             {
@@ -581,7 +593,6 @@ namespace GocatorShiftExportApp.ViewModels
                 processedHeaders.Add(timestampHeader);
             }
             
-            // Add rest of the headers in original order
             foreach (var header in headers)
             {
                 if (!processedHeaders.Contains(header))
@@ -590,10 +601,20 @@ namespace GocatorShiftExportApp.ViewModels
                 }
             }
 
-            // Write reordered headers
+            // Write reordered headers (row 1)
             for (int col = 1; col <= reorderedHeaders.Count; col++)
             {
                 sheet.Cells[1, col].Value = reorderedHeaders[col - 1];
+            }
+
+            // Write sub-headers (row 2) when available
+            if (subHeaders != null && subHeaders.Length > 0)
+            {
+                var reorderedSubHeaders = GetReorderedSubHeaders(reorderedHeaders, headers, subHeaders);
+                for (int col = 1; col <= reorderedSubHeaders.Count; col++)
+                {
+                    sheet.Cells[2, col].Value = reorderedSubHeaders[col - 1];
+                }
             }
 
             // Identify key columns
@@ -602,8 +623,8 @@ namespace GocatorShiftExportApp.ViewModels
                 "Date", "Timestamp", "Shift", "Station", "CHEP_PALLET_ID"
             };
 
-            // Write rows for each Gocator row, filling with 0s
-            int excelRow = 2;
+            // Write rows for each Gocator row, filling with 0s - data starts at row 3
+            int excelRow = 3;
             foreach (var gocatorRow in gocatorData.Rows)
             {
                 for (int col = 1; col <= reorderedHeaders.Count; col++)
@@ -668,6 +689,43 @@ namespace GocatorShiftExportApp.ViewModels
             }
         }
 
+        /// <summary>
+        /// Builds sub-headers in the same column order as reorderedHeaders, using original Headers/SubHeaders.
+        /// </summary>
+        private static List<string> GetReorderedSubHeaders(List<string> reorderedHeaders, string[] headers, string[] subHeaders)
+        {
+            var result = new List<string>(reorderedHeaders.Count);
+            for (int col = 0; col < reorderedHeaders.Count; col++)
+            {
+                string header = reorderedHeaders[col];
+                int headerCount = 0;
+                for (int k = 0; k < col; k++)
+                {
+                    if (string.Equals(reorderedHeaders[k], header, StringComparison.OrdinalIgnoreCase))
+                        headerCount++;
+                }
+                int occurrenceCount = 0;
+                int originalIndex = -1;
+                for (int idx = 0; idx < headers.Length; idx++)
+                {
+                    if (string.Equals(headers[idx], header, StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (occurrenceCount == headerCount)
+                        {
+                            originalIndex = idx;
+                            break;
+                        }
+                        occurrenceCount++;
+                    }
+                }
+                if (originalIndex >= 0 && originalIndex < subHeaders.Length)
+                    result.Add(subHeaders[originalIndex] ?? "");
+                else
+                    result.Add("");
+            }
+            return result;
+        }
+
         private void MatchAndWriteShiftData(ExcelWorksheet sheet, CsvData gocatorData, ShiftData shiftData)
         {
             // Sort shift data by timestamp for efficient matching
@@ -713,10 +771,20 @@ namespace GocatorShiftExportApp.ViewModels
                 }
             }
 
-            // Write reordered headers
+            // Write reordered headers (row 1)
             for (int col = 1; col <= reorderedHeaders.Count; col++)
             {
                 sheet.Cells[1, col].Value = reorderedHeaders[col - 1];
+            }
+
+            // Write sub-headers (row 2: TLB1, TIB1, etc.) in same column order as headers
+            if (shiftData.SubHeaders != null && shiftData.SubHeaders.Length > 0)
+            {
+                var reorderedSubHeaders = GetReorderedSubHeaders(reorderedHeaders, shiftData.Headers, shiftData.SubHeaders);
+                for (int col = 1; col <= reorderedSubHeaders.Count; col++)
+                {
+                    sheet.Cells[2, col].Value = reorderedSubHeaders[col - 1];
+                }
             }
 
             // Identify key columns that should be preserved (not filled with 0)
@@ -725,8 +793,8 @@ namespace GocatorShiftExportApp.ViewModels
                 "Date", "Timestamp", "Shift", "Station", "CHEP_PALLET_ID"
             };
 
-            // Match each Gocator row with shift data (Gocator is source of truth)
-            int excelRow = 2;
+            // Match each Gocator row with shift data (Gocator is source of truth) - data starts at row 3
+            int excelRow = 3;
             foreach (var gocatorRow in gocatorData.Rows)
             {
                 if (!gocatorRow.FullTimestamp.HasValue)
@@ -919,6 +987,7 @@ namespace GocatorShiftExportApp.ViewModels
         private class ShiftData
         {
             public string[] Headers { get; set; }
+            public string[] SubHeaders { get; set; } // Second row: TLB1, TIB1, TIB2, etc.
             public List<ShiftRow> Rows { get; set; } = new List<ShiftRow>();
             public string Station { get; set; }
         }
